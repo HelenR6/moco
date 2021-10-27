@@ -20,6 +20,8 @@ import torch.utils.data.distributed
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
+from advertorch.attacks import LinfPGDAttack, L2PGDAttack
+import numpy as np
 
 model_names = sorted(name for name in models.__dict__
     if name.islower() and not name.startswith("__")
@@ -144,14 +146,14 @@ def main_worker(gpu, ngpus_per_node, args):
     print("=> creating model '{}'".format(args.arch))
     model = models.__dict__[args.arch]()
 
-    # freeze all layers but the last fc
-    for name, param in model.named_parameters():
-        if name not in ['fc.weight', 'fc.bias']:
-            param.requires_grad = False
-    # init the fc layer
-    model.fc.weight.data.normal_(mean=0.0, std=0.01)
-    model.fc.bias.data.zero_()
-
+    # # freeze all layers but the last fc
+    # for name, param in model.named_parameters():
+    #     if name not in ['fc.weight', 'fc.bias']:
+    #         param.requires_grad = False
+    # # init the fc layer
+    # model.fc.weight.data.normal_(mean=0.0, std=0.01)
+    # model.fc.bias.data.zero_()
+    model.eval()
     # load from pre-trained, before DistributedDataParallel constructor
     if args.pretrained:
         if os.path.isfile(args.pretrained):
@@ -208,12 +210,12 @@ def main_worker(gpu, ngpus_per_node, args):
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
 
-    # optimize only the linear classifier
-    parameters = list(filter(lambda p: p.requires_grad, model.parameters()))
-    assert len(parameters) == 2  # fc.weight, fc.bias
-    optimizer = torch.optim.SGD(parameters, args.lr,
-                                momentum=args.momentum,
-                                weight_decay=args.weight_decay)
+    # # optimize only the linear classifier
+    # parameters = list(filter(lambda p: p.requires_grad, model.parameters()))
+    # assert len(parameters) == 2  # fc.weight, fc.bias
+    # optimizer = torch.optim.SGD(parameters, args.lr,
+    #                             momentum=args.momentum,
+    #                             weight_decay=args.weight_decay)
 
     # optionally resume from a checkpoint
     if args.resume:
@@ -371,12 +373,17 @@ def validate(val_loader, model, criterion, args):
     model.eval()
 
     with torch.no_grad():
+        adversary = L2PGDAttack(
+        model, loss_fn=nn.CrossEntropyLoss(reduction="sum"), eps=3.0,
+        nb_iter=20, eps_iter=0.375, rand_init=True, clip_min=0.0, clip_max=1.0,
+        targeted=False)
         end = time.time()
         for i, (images, target) in enumerate(val_loader):
             if args.gpu is not None:
                 images = images.cuda(args.gpu, non_blocking=True)
             target = target.cuda(args.gpu, non_blocking=True)
-
+            with torch.enable_grad():
+              adv_untargeted = adversary.perturb(images, target)
             # compute output
             output = model(images)
             loss = criterion(output, target)
