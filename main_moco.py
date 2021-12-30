@@ -288,15 +288,21 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
 
     # switch to train mode
     model.train()
-
+    from advertorch.attacks import LinfPGDAttack
+    adversary = LinfPGDAttack(
+        model, loss_fn=nn.CrossEntropyLoss(), eps=0.3,
+        nb_iter=40, eps_iter=0.01, rand_init=True, clip_min=0.0,
+        clip_max=1.0, targeted=False)
     end = time.time()
-    for i, (images, _) in enumerate(train_loader):
+    for i, (images, label) in enumerate(train_loader):
         # measure data loading time
         data_time.update(time.time() - end)
 
         if args.gpu is not None:
             images[0] = images[0].cuda(args.gpu, non_blocking=True)
+            images[0] = adversary.perturb(images[0], label)
             images[1] = images[1].cuda(args.gpu, non_blocking=True)
+            images[1] = adversary.perturb(images[1], label)
 
         # compute output
         output, target = model(im_q=images[0], im_k=images[1])
