@@ -297,6 +297,7 @@ def main_worker(gpu, ngpus_per_node, args):
             
 def validate(val_loader, model, criterion, args):
     batch_time = AverageMeter('Time', ':6.3f')
+    data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
     top5 = AverageMeter('Acc@5', ':6.2f')
