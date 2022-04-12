@@ -21,7 +21,7 @@ import torch.utils.data.distributed
 import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
-
+from pathlib import Path
 import moco.loader
 import moco.builder
 
@@ -187,9 +187,15 @@ def main_worker(gpu, ngpus_per_node, args):
         # comment out the following line for debugging
         raise NotImplementedError("Only DistributedDataParallel is supported.")
     else:
-        # AllGather implementation (batch shuffle, queue update, etc.) in
-        # this code only supports DistributedDataParallel.
-        raise NotImplementedError("Only DistributedDataParallel is supported.")
+        # # AllGather implementation (batch shuffle, queue update, etc.) in
+        # # this code only supports DistributedDataParallel.
+        # raise NotImplementedError("Only DistributedDataParallel is supported.")
+        # DataParallel will divide and allocate batch_size to all available GPUs
+        if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
+            model.features = torch.nn.DataParallel(model.features)
+            model.cuda()
+        else:
+            model = torch.nn.DataParallel(model).cuda()
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
@@ -246,9 +252,9 @@ def main_worker(gpu, ngpus_per_node, args):
             normalize
         ]
 
-    train_dataset = datasets.ImageFolder(
-        traindir,
-        moco.loader.TwoCropsTransform(transforms.Compose(augmentation)))
+    # train_dataset = datasets.ImageFolder(
+    #     traindir,
+    #     moco.loader.TwoCropsTransform(transforms.Compose(augmentation)))
     valdir = Path(args.data)
     if args.distributed:
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset)
@@ -264,9 +270,9 @@ def main_worker(gpu, ngpus_per_node, args):
         batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, pin_memory=True)
     
-    train_loader = torch.utils.data.DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
-        num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True)
+    # train_loader = torch.utils.data.DataLoader(
+    #     train_dataset, batch_size=args.batch_size, shuffle=(train_sampler is None),
+    #     num_workers=args.workers, pin_memory=True, sampler=train_sampler, drop_last=True)
     
     if args.evaluate:
         validate(val_loader, model, criterion, args)
@@ -315,16 +321,16 @@ def validate(val_loader, model, criterion, args):
           output, target = model(im_q=images[0], im_k=images[1])
           loss = criterion(output, target)
             # measure accuracy and record loss
-            acc1, acc5 = accuracy(output, target, topk=(1, 5))
-            losses.update(loss.item(), images.size(0))
-            top1.update(acc1[0], images.size(0))
-            top5.update(acc5[0], images.size(0))
-            # measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
+          acc1, acc5 = accuracy(output, target, topk=(1, 5))
+          losses.update(loss.item(), images.size(0))
+          top1.update(acc1[0], images.size(0))
+          top5.update(acc5[0], images.size(0))
+          # measure elapsed time
+          batch_time.update(time.time() - end)
+          end = time.time()
 
-            if i % args.print_freq == 0:
-                progress.display(i)
+          if i % args.print_freq == 0:
+              progress.display(i)
 
         # TODO: this should also be done with the ProgressMeter
         print(' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}'
