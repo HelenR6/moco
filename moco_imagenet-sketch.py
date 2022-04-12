@@ -158,10 +158,29 @@ def main_worker(gpu, ngpus_per_node, args):
                                 world_size=args.world_size, rank=args.rank)
     # create model
     print("=> creating model '{}'".format(args.arch))
-    model = moco.builder.MoCo(
-        models.__dict__[args.arch],
-        args.moco_dim, args.moco_k, args.moco_m, args.moco_t, args.mlp)
-    print(model)
+    model = models.__dict__[args.arch]()
+
+    # load from pre-trained, before DistributedDataParallel constructor
+    if args.pretrained:
+        if os.path.isfile(args.pretrained):
+            print("=> loading checkpoint '{}'".format(args.pretrained))
+            checkpoint = torch.load(args.pretrained, map_location="cpu")
+
+            # rename moco pre-trained keys
+            state_dict = checkpoint['state_dict']
+            for k in list(state_dict.keys()):
+                # retain only encoder_q up to before the embedding layer
+                if k.startswith('module.encoder_q') :
+                    # remove prefix
+                    state_dict[k[len("module.encoder_q."):]] = state_dict[k]
+                # delete renamed or unused k
+                del state_dict[k]
+
+            args.start_epoch = 0
+            msg = model.load_state_dict(state_dict, strict=False)
+            print("=> loaded pre-trained model '{}'".format(args.pretrained))
+        else:
+            print("=> no checkpoint found at '{}'".format(args.pretrained))
 
     if args.distributed:
         # For multiprocessing distributed, DistributedDataParallel constructor
@@ -195,7 +214,9 @@ def main_worker(gpu, ngpus_per_node, args):
             model.features = torch.nn.DataParallel(model.features)
             model.cuda()
         else:
-            model = torch.nn.DataParallel(model).cuda()
+            print("cuda")
+            # model = torch.nn.DataParallel(model).cuda()
+            model = (model).cuda()
 
     # define loss function (criterion) and optimizer
     criterion = nn.CrossEntropyLoss().cuda(args.gpu)
@@ -261,12 +282,13 @@ def main_worker(gpu, ngpus_per_node, args):
     else:
         train_sampler = None
     val_loader = torch.utils.data.DataLoader(
-        datasets.ImageFolder(valdir, transforms.Compose([
+        datasets.ImageFolder(valdir, moco.loader.TwoCropsTransform(transforms.Compose([
             transforms.Resize(256),
             transforms.CenterCrop(224),
             transforms.ToTensor(),
             normalize,
-        ])),
+        ]))
+        ),
         batch_size=args.batch_size, shuffle=False,
         num_workers=args.workers, pin_memory=True)
     
@@ -311,7 +333,7 @@ def validate(val_loader, model, criterion, args):
 
     with torch.no_grad():
         end = time.time()
-        for i, (images, target) in enumerate(val_loader):
+        for i, (images, label) in enumerate(val_loader):
           # measure data loading time
           data_time.update(time.time() - end)
 
@@ -319,7 +341,7 @@ def validate(val_loader, model, criterion, args):
               images[0] = images[0].cuda(args.gpu, non_blocking=True)
               images[1] = images[1].cuda(args.gpu, non_blocking=True)
           # compute output
-          output, target = model(im_q=images[0], im_k=images[1])
+          output, target = model(im_q=images[0].cuda(), im_k=images[1].cuda())
           loss = criterion(output, target)
             # measure accuracy and record loss
           acc1, acc5 = accuracy(output, target, topk=(1, 5))
